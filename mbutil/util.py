@@ -39,7 +39,9 @@ def mbtiles_connect(mbtiles_file):
 def optimize_connection(cur):
     cur.execute("""PRAGMA synchronous=0""")
     cur.execute("""PRAGMA locking_mode=EXCLUSIVE""")
-    cur.execute("""PRAGMA journal_mode=DELETE""")
+    cur.execute("""PRAGMA journal_mode=OFF""")
+    cur.execute("""PRAGMA cache_size=200000""")
+
 
 def compression_prepare(cur, con):
     cur.execute("""
@@ -69,24 +71,24 @@ def compression_do(cur, con, chunk):
     res = cur.fetchone()
     total_tiles = res[0]
     logging.debug("%d total tiles to fetch" % total_tiles)
-    for i in range(total_tiles / chunk + 1):
+    for i in range(total_tiles / chunk+1):
         logging.debug("%d / %d rounds done" % (i, (total_tiles / chunk)))
         ids = []
         files = []
-        start = time.time()
+        #start = time.time()
         cur.execute("""select zoom_level, tile_column, tile_row, tile_data
             from tiles where rowid > ? and rowid <= ?""", ((i * chunk), ((i + 1) * chunk)))
-        logger.debug("select: %s" % (time.time() - start))
+        #logger.debug("select: %s" % (time.time() - start))
         rows = cur.fetchall()
         for r in rows:
             total = total + 1
             if r[3] in files:
                 overlapping = overlapping + 1
-                start = time.time()
+                #start = time.time()
                 query = """insert into map
                     (zoom_level, tile_column, tile_row, tile_id)
                     values (?, ?, ?, ?)"""
-                logger.debug("insert: %s" % (time.time() - start))
+                #logger.debug("insert: %s" % (time.time() - start))
                 cur.execute(query, (r[0], r[1], r[2], ids[files.index(r[3])]))
             else:
                 unique = unique + 1
@@ -100,13 +102,13 @@ def compression_do(cur, con, chunk):
                     (tile_id, tile_data)
                     values (?, ?)"""
                 cur.execute(query, (str(id), sqlite3.Binary(r[3])))
-                logger.debug("insert into images: %s" % (time.time() - start))
-                start = time.time()
+                #logger.debug("insert into images: %s" % (time.time() - start))
+                #start = time.time()
                 query = """insert into map
                     (zoom_level, tile_column, tile_row, tile_id)
                     values (?, ?, ?, ?)"""
                 cur.execute(query, (r[0], r[1], r[2], id))
-                logger.debug("insert into map: %s" % (time.time() - start))
+                #logger.debug("insert into map: %s" % (time.time() - start))
         con.commit()
 
 def compression_finalize(cur):
@@ -123,8 +125,8 @@ def compression_finalize(cur):
     cur.execute("""
           CREATE UNIQUE INDEX images_id on images
             (tile_id);""")
-    cur.execute("""vacuum;""")
-    cur.execute("""analyze;""")
+
+
 
 def disk_to_mbtiles(directory_path, mbtiles_file, **kwargs):
     logger.info("Importing disk to MBTiles")
@@ -258,3 +260,19 @@ def mbtiles_to_disk(mbtiles_file, directory_path, **kwargs):
         for c in msg: sys.stdout.write(chr(8))
         logger.info('%s / %s grids exported' % (done, count))
         g = grids.fetchone()
+
+def compress_mbtiles(mbtiles_file, **kwargs):
+    logger.info("Compress MBTiles")
+    logger.debug("Compress %s" % (mbtiles_file))
+    con = mbtiles_connect(mbtiles_file)
+    cur = con.cursor()
+    optimize_connection(cur)
+    #mbtiles_setup(cur)
+    
+    compression_prepare(cur, con)
+    compression_do(cur, con, 10000)
+    compression_finalize(cur)
+
+    
+    logger.debug('DB Compressed!')
+    optimize_database(con)
